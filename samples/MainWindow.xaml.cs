@@ -7,6 +7,8 @@ using Silk.NET.DXGI;
 using Interop.Vulkan;
 
 using static Silk.NET.Core.Native.SilkMarshal;
+using System.Windows.Threading;
+
 #if WPF
 using System.IO;
 using System.Windows;
@@ -80,6 +82,11 @@ public sealed partial class MainWindow : Window
 
     private TimeSpan lastRenderTime;
 #endif
+
+    private int _frameCnt = 0;
+    private DispatcherTimer _timer;
+    private Stopwatch _stopwatch = new();
+
     private unsafe void InitializeDirectX()
     {
         #region Create device and context
@@ -241,6 +248,19 @@ public sealed partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _timer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(1000)
+        };
+        _timer.Tick += (s, e) =>
+        {
+            var fps = _frameCnt / _stopwatch.Elapsed.TotalSeconds;
+            fpsTextBlock.Text = $"FPS: {fps:f1},width: {(uint)renderTarget.ActualWidth},height: {(uint)renderTarget.ActualHeight}";
+            _frameCnt = 0;
+            _stopwatch.Restart();
+        };
+        _stopwatch.Start();
+
         InitializeDirectX();
 
         uint width = (uint)renderTarget.ActualWidth;
@@ -271,6 +291,8 @@ public sealed partial class MainWindow : Window
         renderTarget.SizeChanged += OnSizeChanged;
 
         CompositionTarget.Rendering += OnRendering;
+
+        _timer.Start();
     }
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
@@ -311,8 +333,9 @@ public sealed partial class MainWindow : Window
             d3dImage.AddDirtyRect(new Int32Rect(0, 0, d3dImage.PixelWidth, d3dImage.PixelHeight));
 
             d3dImage.Unlock();
-
+            
             lastRenderTime = args.RenderingTime;
+            _frameCnt++;
         }
 #endif
     }
@@ -336,6 +359,7 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, object e)
     {
+        _timer.Stop();
         CompositionTarget.Rendering -= OnRendering;
 
         vulkanInterop.Clear();
