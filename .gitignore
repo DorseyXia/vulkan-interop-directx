@@ -3,3 +3,4 @@
 artifacts/
 
 *.user
+/VulkanCPP/x64/Debug
