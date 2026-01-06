@@ -1,5 +1,7 @@
-using System.Diagnostics;
+//#define CSharpVulkan
 
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Silk.NET.Core.Native;
 using Silk.NET.Direct3D11;
 using Silk.NET.DXGI;
@@ -8,6 +10,10 @@ using Interop.Vulkan;
 
 using static Silk.NET.Core.Native.SilkMarshal;
 using System.Windows.Threading;
+using UnmanagedType = System.Runtime.InteropServices.UnmanagedType;
+using System.Reflection.Metadata;
+using System;
+
 
 #if WPF
 using System.IO;
@@ -40,11 +46,17 @@ partial interface ISwapChainPanelNative
 }
 #endif
 
+
+
 public sealed partial class MainWindow : Window
 {
     private readonly Stopwatch stopwatch = new();
 
+#if CSharpVulkan
     private readonly VulkanInterop vulkanInterop = new();
+#else
+    private IntPtr VulkanInstance;
+#endif
 
     private readonly D3D11 d3d11 = D3D11.GetApi(null);
 
@@ -280,13 +292,27 @@ public sealed partial class MainWindow : Window
         format = Silk.NET.Vulkan.Format.R8G8B8A8Unorm;
         handleType = Silk.NET.Vulkan.ExternalMemoryHandleTypeFlags.D3D11TextureBit;
 #elif WPF
-        modelStream = File.Open("assets/DamagedHelmet.glb", FileMode.Open);
         format = Silk.NET.Vulkan.Format.B8G8R8A8Unorm;
         handleType = Silk.NET.Vulkan.ExternalMemoryHandleTypeFlags.D3D11TextureKmtBit;
-#endif
-        vulkanInterop.Initialize(renderTargetSharedHandle, dxgiAdapterLuid, width, height, format, handleType, modelStream);
+#if CSharpVulkan
+        modelStream = File.Open("assets/DamagedHelmet.glb", FileMode.Open);
 
+        vulkanInterop.Initialize(renderTargetSharedHandle, dxgiAdapterLuid, width, height, format, handleType, modelStream);
         await modelStream.DisposeAsync();
+#else
+        VulkanInstance = CreateVulkanInteropInstance();
+        var luid = ((ulong)(uint)dxgiAdapterLuid.High << 32) | dxgiAdapterLuid.Low;
+        uint formatint = (uint)format;
+        uint handleTypeInt = (uint)handleType;
+        VulkanInteropInitialize(VulkanInstance, renderTargetSharedHandle, luid, width, height, formatint, handleTypeInt,
+            @"D:\Repos\vulkan-interop-directx\artifacts\bin\Interop.WPF\debug\assets\DamagedHelmet.glb");
+#endif
+
+
+#endif
+
+
+
 
         renderTarget.SizeChanged += OnSizeChanged;
 
@@ -307,7 +333,7 @@ public sealed partial class MainWindow : Window
 
         CreateResources(width, height);
 
-        vulkanInterop.Resize(renderTargetSharedHandle, width, height);
+        //VulkanInteropResize(VulkanInstance, renderTargetSharedHandle, width, height);
     }
 
     private unsafe void OnRendering(object? sender, object e)
@@ -327,7 +353,11 @@ public sealed partial class MainWindow : Window
         {
             d3dImage.Lock();
 
+#if CSharpVulkan
             vulkanInterop.Draw(stopwatch.ElapsedMilliseconds / 1000f);
+#else
+            VulkanInteropDraw(  VulkanInstance, stopwatch.ElapsedMilliseconds / 1000f);
+#endif
 
             d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, (nint)d3d9surface.Handle);
             d3dImage.AddDirtyRect(new Int32Rect(0, 0, d3dImage.PixelWidth, d3dImage.PixelHeight));
@@ -338,7 +368,7 @@ public sealed partial class MainWindow : Window
             _frameCnt++;
         }
 #endif
-    }
+        }
 
     private unsafe void ReleaseResources()
     {
@@ -362,7 +392,7 @@ public sealed partial class MainWindow : Window
         _timer.Stop();
         CompositionTarget.Rendering -= OnRendering;
 
-        vulkanInterop.Clear();
+        //vulkanInterop.Clear();
 
         ReleaseResources();
 
@@ -404,7 +434,26 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(titleBarRectangle);
 #elif WPF
-        DataContext = vulkanInterop;
+        //DataContext = vulkanInterop;
 #endif
     }
+
+    [DllImport("VulkanCPP.dll")]
+    private static extern IntPtr CreateVulkanInteropInstance();
+
+    [DllImport("VulkanCPP.dll")]
+    private static extern IntPtr VulkanInteropInitialize(
+        IntPtr instance,
+        IntPtr directTextureHandle,
+        UInt64 targetDeviceLuid,
+        UInt32 width,
+        UInt32 height,
+        UInt32 format,
+        UInt32 handleType,
+        [MarshalAs(UnmanagedType.LPStr)] string modelFilePath);
+
+    [DllImport("VulkanCPP.dll")]
+    private static extern void VulkanInteropDraw(IntPtr instance, float time);
+    [DllImport("VulkanCPP.dll")]
+    private static extern void VulkanInteropResize(IntPtr instance, IntPtr sharedTexture, UInt32 w, UInt32 h);
 }

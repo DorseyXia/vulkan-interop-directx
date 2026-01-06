@@ -21,13 +21,6 @@ public static class ResultExtensions
     }
 }
 
-public struct KeyedMutexSyncInfo
-{
-    public ulong AcquireKey;
-    public ulong ReleaseKey;
-    public uint Timeout; // In milliseconds
-}
-
 public unsafe class VulkanInterop
 {
     private const int VK_LUID_SIZE = 8;
@@ -926,34 +919,10 @@ public unsafe class VulkanInterop
         }
     }
 
-    private void SubmitWork(KeyedMutexSyncInfo keyedMutexSyncInfo)
-    {
-        fixed (DeviceMemory* directMemoryPtr = &directImageMemory)
-        {
-            var keyedMutexInfo = new Win32KeyedMutexAcquireReleaseInfoKHR
-            (
-                acquireCount: 1,
-                pAcquireSyncs: directMemoryPtr,
-                pAcquireKeys: &keyedMutexSyncInfo.AcquireKey,
-                pAcquireTimeouts: &keyedMutexSyncInfo.Timeout,
-                releaseCount: 1,
-                pReleaseSyncs: directMemoryPtr,
-                pReleaseKeys: &keyedMutexSyncInfo.ReleaseKey
-            );
-            SubmitWork(&keyedMutexInfo);
-        }
-    }
-
     public void Draw(float time)
     {
         UpdateModelViewProjection(time);
         SubmitWork();
-    }
-
-    public void Draw(float time, KeyedMutexSyncInfo keyedMutexSyncInfo)
-    {
-        UpdateModelViewProjection(time);
-        SubmitWork(keyedMutexSyncInfo);
     }
 
     public void ReleaseSizeDependentResources()
