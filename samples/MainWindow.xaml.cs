@@ -1,4 +1,4 @@
-//#define CSharpVulkan
+#define CSharpVulkan
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -333,7 +333,11 @@ public sealed partial class MainWindow : Window
 
         CreateResources(width, height);
 
-        //VulkanInteropResize(VulkanInstance, renderTargetSharedHandle, width, height);
+#if CSharpVulkan
+        vulkanInterop.Resize(renderTargetSharedHandle, width, height);
+#else
+        VulkanInteropResize(VulkanInstance, renderTargetSharedHandle, width, height);
+#endif
     }
 
     private unsafe void OnRendering(object? sender, object e)
