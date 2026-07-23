@@ -1,4 +1,4 @@
-#define CSharpVulkan
+#define WPF
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
