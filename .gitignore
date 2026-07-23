@@ -4,3 +4,5 @@ artifacts/
 
 *.user
 /VulkanCPP/x64/Debug
+/VulkanCPP/x64/Release
+/x64/Release
