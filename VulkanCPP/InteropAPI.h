@@ -3,6 +3,8 @@
 #define INTEROP_API __declspec(dllexport)
 #include <cstdint>
 
+typedef void(*RenderCallback)();
+
 extern "C" {
 
 	INTEROP_API void* CreateVulkanInteropInstance();
@@ -18,5 +20,8 @@ extern "C" {
 		const char* modelFilePath);
 
 	INTEROP_API void VulkanInteropDraw(void* instance, float time);
+	INTEROP_API void VulkanInteropStartRenderLoop(void* instance, RenderCallback callback);
+	INTEROP_API void VulkanInteropStopRenderLoop(void* instance);
+	INTEROP_API void VulkanInteropRequestFrame(void* instance, float time);
 	INTEROP_API void VulkanInteropResize(void* instance, HANDLE sharedTexture, uint32_t w, uint32_t h);
 }

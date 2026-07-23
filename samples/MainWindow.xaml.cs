@@ -57,11 +57,15 @@ public sealed partial class MainWindow : Window
 
     private ComPtr<IDirect3DTexture9> backbufferTexture;
 
-    private TimeSpan lastRenderTime;
-
     private int _frameCnt = 0;
     private DispatcherTimer _timer;
     private Stopwatch _stopwatch = new();
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void VulkanRenderCallback();
+
+    private VulkanRenderCallback? _renderCallback;
+    private GCHandle _callbackHandle;
 
     private unsafe void InitializeDirectX()
     {
@@ -179,7 +183,13 @@ public sealed partial class MainWindow : Window
 
         renderTarget.SizeChanged += OnSizeChanged;
 
-        CompositionTarget.Rendering += OnRendering;
+        _renderCallback = OnVulkanRenderComplete;
+        _callbackHandle = GCHandle.Alloc(_renderCallback);
+
+        // Start Vulkan's dedicated render thread
+        VulkanInteropStartRenderLoop(VulkanInstance, _renderCallback);
+        // Request the first frame
+        VulkanInteropRequestFrame(VulkanInstance, stopwatch.ElapsedMilliseconds / 1000f);
 
         _timer.Start();
     }
@@ -203,27 +213,27 @@ public sealed partial class MainWindow : Window
 #endif
     }
 
-    private unsafe void OnRendering(object? sender, object e)
+    private unsafe void OnVulkanRenderComplete()
     {
-
-        var args = (RenderingEventArgs)e;
-
-        if (d3dImage.IsFrontBufferAvailable && lastRenderTime != args.RenderingTime)
+        // Called from Vulkan's render thread, marshal to UI thread
+        Dispatcher.BeginInvoke(() =>
         {
-            d3dImage.Lock();
+            if (d3dImage.IsFrontBufferAvailable)
+            {
+                d3dImage.Lock();
 
+                d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, (nint)d3d9surface.Handle);
+                d3dImage.AddDirtyRect(new Int32Rect(0, 0, d3dImage.PixelWidth, d3dImage.PixelHeight));
 
-            VulkanInteropDraw(  VulkanInstance, stopwatch.ElapsedMilliseconds / 1000f);
+                d3dImage.Unlock();
 
-            d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, (nint)d3d9surface.Handle);
-            d3dImage.AddDirtyRect(new Int32Rect(0, 0, d3dImage.PixelWidth, d3dImage.PixelHeight));
+                _frameCnt++;
+            }
 
-            d3dImage.Unlock();
-            
-            lastRenderTime = args.RenderingTime;
-            _frameCnt++;
-        }
-        }
+            // Request next frame
+            VulkanInteropRequestFrame(VulkanInstance, stopwatch.ElapsedMilliseconds / 1000f);
+        });
+    }
 
     private unsafe void ReleaseResources()
     {
@@ -239,7 +249,9 @@ public sealed partial class MainWindow : Window
     private void OnWindowClosed(object sender, object e)
     {
         _timer.Stop();
-        CompositionTarget.Rendering -= OnRendering;
+        VulkanInteropStopRenderLoop(VulkanInstance);
+        if (_callbackHandle.IsAllocated)
+            _callbackHandle.Free();
 
         //vulkanInterop.Clear();
 
@@ -291,6 +303,16 @@ public sealed partial class MainWindow : Window
 
     [DllImport("VulkanCPP.dll")]
     private static extern void VulkanInteropDraw(IntPtr instance, float time);
+
+    [DllImport("VulkanCPP.dll")]
+    private static extern void VulkanInteropStartRenderLoop(IntPtr instance, VulkanRenderCallback callback);
+
+    [DllImport("VulkanCPP.dll")]
+    private static extern void VulkanInteropStopRenderLoop(IntPtr instance);
+
+    [DllImport("VulkanCPP.dll")]
+    private static extern void VulkanInteropRequestFrame(IntPtr instance, float time);
+
     [DllImport("VulkanCPP.dll")]
     private static extern void VulkanInteropResize(IntPtr instance, IntPtr sharedTexture, UInt32 w, UInt32 h);
 }
