@@ -15,7 +15,6 @@ using System.Reflection.Metadata;
 using System;
 
 
-#if WPF
 using System.IO;
 using System.Windows;
 using System.Windows.Interop;
@@ -24,29 +23,6 @@ using System.Windows.Media;
 using Silk.NET.Direct3D9;
 
 namespace Interop.WPF;
-#elif WinUI
-using System.Runtime.InteropServices;
-
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-
-using Windows.Storage;
-using Windows.ApplicationModel;
-
-using WinRT;
-
-namespace Interop.WinUI3;
-
-[ComImport, Guid("63aad0b8-7c24-40ff-85a8-640d944cc325"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-partial interface ISwapChainPanelNative
-{
-    [PreserveSig]
-    HResult SetSwapChain(ComPtr<IDXGISwapChain1> swapchain);
-}
-#endif
-
-
 
 public sealed partial class MainWindow : Window
 {
@@ -71,18 +47,7 @@ public sealed partial class MainWindow : Window
     private ComPtr<ID3D11Texture2D> renderTargetTexture;
 
     private nint renderTargetSharedHandle;
-#if WinUI
-    private ComPtr<IDXGISwapChain1> swapchain;
 
-    private ComPtr<ID3D11Texture2D> backbufferTexture;
-
-    private ComPtr<ID3D11Resource> backbufferResource;
-    private ComPtr<ID3D11Resource> renderTargetResource;
-
-    private ComPtr<IDXGIKeyedMutex> renderTargetKeyedMutex;
-    private KeyedMutexSyncInfo vulkanSyncInfo;
-    private KeyedMutexSyncInfo copySyncInfo;
-#elif WPF
     private readonly D3D9 d3d9 = D3D9.GetApi(null);
 
     private ComPtr<IDirect3D9Ex> d3d9context;
@@ -93,7 +58,6 @@ public sealed partial class MainWindow : Window
     private ComPtr<IDirect3DTexture9> backbufferTexture;
 
     private TimeSpan lastRenderTime;
-#endif
 
     private int _frameCnt = 0;
     private DispatcherTimer _timer;
@@ -118,21 +82,8 @@ public sealed partial class MainWindow : Window
         Console.WriteLine($"Direct3D11 device: 0x{(nint)d3d11device.Handle:X8}");
         Console.WriteLine($"Direct3D11 context: 0x{(nint)d3d11context.Handle:X8}");
         #endregion
-#if WinUI
-        #region Get DXGI device, adapter and factory
-        dxgiDevice = d3d11device.QueryInterface<IDXGIDevice3>();
 
-        ThrowHResult(dxgiDevice.GetAdapter(ref dxgiAdapter));
 
-        AdapterDesc desc = default;
-        ThrowHResult(dxgiAdapter.GetDesc(ref desc));
-
-        string name = PtrToString((nint)desc.Description);
-        dxgiAdapterLuid = desc.AdapterLuid;
-
-        dxgiFactory = dxgiAdapter.GetParent<IDXGIFactory2>();
-        #endregion
-#elif WPF
         #region Create D3D9 context
         ThrowHResult(d3d9.Direct3DCreate9Ex(D3D9.SdkVersion, ref d3d9context));
 
@@ -152,80 +103,12 @@ public sealed partial class MainWindow : Window
         Console.WriteLine($"Direct3D9 device: 0x{(nint)d3d9device.Handle:X8}");
         Console.WriteLine($"Direct3D9 context: 0x{(nint)d3d9context.Handle:X8}");
         #endregion
-#endif
     }
 
     private unsafe void CreateResources(uint width, uint height)
     {
         void* handle;
 
-#if WinUI
-        #region Create swapchain and get the texture
-        var swapchainDescription = new SwapChainDesc1
-        {
-            Width = width,
-            Height = height,
-            Format = Format.FormatR8G8B8A8Unorm,
-            SwapEffect = SwapEffect.FlipSequential,
-            SampleDesc = new SampleDesc(1u, 0u),
-            BufferUsage = DXGI.UsageBackBuffer,
-            BufferCount = 2u,
-        };
-
-        ThrowHResult(dxgiFactory.CreateSwapChainForComposition
-        (
-            dxgiDevice,
-            swapchainDescription,
-            default(ComPtr<IDXGIOutput>),
-            ref swapchain
-        ));
-
-        backbufferTexture = swapchain.GetBuffer<ID3D11Texture2D>(0u);
-
-        renderTarget.As<ISwapChainPanelNative>().SetSwapChain(swapchain);
-        #endregion
-
-        #region Create render target texture with shared mode
-        var renderTargetDescription = new Texture2DDesc
-        {
-            Width = width,
-            Height = height,
-            Format = Format.FormatR8G8B8A8Unorm,
-            BindFlags = (uint)BindFlag.RenderTarget,
-            MiscFlags = (uint)(ResourceMiscFlag.SharedNthandle | ResourceMiscFlag.SharedKeyedmutex),
-            SampleDesc = new SampleDesc(1u, 0u),
-            ArraySize = 1u,
-            MipLevels = 1u
-        };
-
-        ThrowHResult(d3d11device.CreateTexture2D(renderTargetDescription, null, ref renderTargetTexture));
-        #endregion
-
-        backbufferResource = backbufferTexture.QueryInterface<ID3D11Resource>();
-        renderTargetResource = renderTargetTexture.QueryInterface<ID3D11Resource>();
-
-        #region Get keyed mutex for render target texture and setup syncing
-        renderTargetKeyedMutex = renderTargetTexture.QueryInterface<IDXGIKeyedMutex>();
-        vulkanSyncInfo = new KeyedMutexSyncInfo
-        {
-            AcquireKey = 0, // Vulkan goes first
-            ReleaseKey = 1, // Release key for copy to back buffer to run
-            Timeout = 10000
-        };
-        copySyncInfo = new KeyedMutexSyncInfo
-        {
-            AcquireKey = 1,
-            ReleaseKey = 0, // Release key for Vulkan to run
-            Timeout = 5000
-        };
-        #endregion
-
-        #region Create shared handle for render target texture
-        var resource = renderTargetTexture.QueryInterface<IDXGIResource1>();
-        ThrowHResult(resource.CreateSharedHandle((SecurityAttributes*)null, DXGI.SharedResourceRead | DXGI.SharedResourceWrite, (char*)null, &handle));
-        resource.Dispose();
-        #endregion
-#elif WPF
         #region Create D3D9 back buffer texture and open it on the D3D11 side as the render target
         void* d3d9shared = null;
         ThrowHResult(d3d9device.CreateTexture
@@ -252,7 +135,6 @@ public sealed partial class MainWindow : Window
         ThrowHResult(resource.GetSharedHandle(&handle));
         resource.Dispose();
         #endregion
-#endif
 
         renderTargetSharedHandle = (nint)handle;
         Console.WriteLine($"Shared Direct3D11 render target texture: 0x{renderTargetSharedHandle:X8}");
@@ -283,35 +165,16 @@ public sealed partial class MainWindow : Window
         Stream modelStream;
         Silk.NET.Vulkan.Format format;
         Silk.NET.Vulkan.ExternalMemoryHandleTypeFlags handleType;
-#if WinUI
-        var folder = await StorageFolder.GetFolderFromPathAsync(Package.Current.InstalledPath);
-        var assetsFolder = await folder.GetFolderAsync("assets");
-        var helmetFile = await assetsFolder.GetFileAsync("DamagedHelmet.glb");
 
-        modelStream = await helmetFile.OpenStreamForReadAsync();
-        format = Silk.NET.Vulkan.Format.R8G8B8A8Unorm;
-        handleType = Silk.NET.Vulkan.ExternalMemoryHandleTypeFlags.D3D11TextureBit;
-#elif WPF
         format = Silk.NET.Vulkan.Format.B8G8R8A8Unorm;
         handleType = Silk.NET.Vulkan.ExternalMemoryHandleTypeFlags.D3D11TextureKmtBit;
-#if CSharpVulkan
-        modelStream = File.Open("assets/DamagedHelmet.glb", FileMode.Open);
 
-        vulkanInterop.Initialize(renderTargetSharedHandle, dxgiAdapterLuid, width, height, format, handleType, modelStream);
-        await modelStream.DisposeAsync();
-#else
         VulkanInstance = CreateVulkanInteropInstance();
         var luid = ((ulong)(uint)dxgiAdapterLuid.High << 32) | dxgiAdapterLuid.Low;
         uint formatint = (uint)format;
         uint handleTypeInt = (uint)handleType;
         VulkanInteropInitialize(VulkanInstance, renderTargetSharedHandle, luid, width, height, formatint, handleTypeInt,
             @"D:\Repos\vulkan-interop-directx\artifacts\bin\Interop.WPF\debug\assets\DamagedHelmet.glb");
-#endif
-
-
-#endif
-
-
 
 
         renderTarget.SizeChanged += OnSizeChanged;
@@ -342,26 +205,15 @@ public sealed partial class MainWindow : Window
 
     private unsafe void OnRendering(object? sender, object e)
     {
-#if WinUI
-        vulkanInterop.Draw(stopwatch.ElapsedMilliseconds / 1000f, vulkanSyncInfo);
 
-        ThrowHResult(renderTargetKeyedMutex.AcquireSync(copySyncInfo.AcquireKey, copySyncInfo.Timeout));
-        d3d11context.CopyResource(backbufferResource, renderTargetResource);
-        ThrowHResult(renderTargetKeyedMutex.ReleaseSync(copySyncInfo.ReleaseKey));
-
-        ThrowHResult(swapchain.Present(0u, (uint)SwapChainFlag.None));
-#elif WPF
         var args = (RenderingEventArgs)e;
 
         if (d3dImage.IsFrontBufferAvailable && lastRenderTime != args.RenderingTime)
         {
             d3dImage.Lock();
 
-#if CSharpVulkan
-            vulkanInterop.Draw(stopwatch.ElapsedMilliseconds / 1000f);
-#else
+
             VulkanInteropDraw(  VulkanInstance, stopwatch.ElapsedMilliseconds / 1000f);
-#endif
 
             d3dImage.SetBackBuffer(D3DResourceType.IDirect3DSurface9, (nint)d3d9surface.Handle);
             d3dImage.AddDirtyRect(new Int32Rect(0, 0, d3dImage.PixelWidth, d3dImage.PixelHeight));
@@ -371,20 +223,13 @@ public sealed partial class MainWindow : Window
             lastRenderTime = args.RenderingTime;
             _frameCnt++;
         }
-#endif
         }
 
     private unsafe void ReleaseResources()
     {
-#if WinUI
-        renderTargetKeyedMutex.Dispose();
-        renderTargetResource.Dispose();
-        backbufferResource.Dispose();
 
-        swapchain.Dispose();
-#elif WPF
         d3d9surface.Dispose();
-#endif
+
         renderTargetTexture.Dispose();
 
         backbufferTexture.Dispose();
@@ -412,13 +257,6 @@ public sealed partial class MainWindow : Window
         d3d9.Dispose();
 #endif
     }
-#if WinUI
-    private void OnSwitchToggled(object sender, RoutedEventArgs e)
-    {
-        Action action = ((ToggleSwitch)sender).IsOn ? stopwatch.Start : stopwatch.Stop;
-        action();
-    }
-#elif WPF
     private void OnToggleButtonChecked(object sender, RoutedEventArgs e)
     {
         stopwatch.Start();
@@ -430,16 +268,11 @@ public sealed partial class MainWindow : Window
         stopwatch.Stop();
         rotateButton.Content = "Rotate";
     }
-#endif
     public MainWindow()
     {
         InitializeComponent();
-#if WinUI
-        ExtendsContentIntoTitleBar = true;
-        SetTitleBar(titleBarRectangle);
-#elif WPF
+
         //DataContext = vulkanInterop;
-#endif
     }
 
     [DllImport("VulkanCPP.dll")]
